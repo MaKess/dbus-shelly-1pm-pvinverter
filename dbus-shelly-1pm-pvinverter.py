@@ -18,10 +18,8 @@ sys.path.insert(1, os.path.join(os.path.dirname(__file__), '/opt/victronenergy/d
 from vedbus import VeDbusService
 
 class DbusShellyBaseService:
-  def __init__(self, servicename, paths, productname='Shelly 1PM', connection='Shelly 1PM HTTP JSON service'):
-    self._config = config = ConfigParser()
-
-    config.read(str(script_path.parent / "config.ini"))
+  def __init__(self, servicename, paths, config, productname='Shelly 1PM', connection='Shelly 1PM HTTP JSON service'):
+    self._config = config
 
     deviceinstance = config.getint('DEFAULT', 'Deviceinstance')
     customname = config.get('DEFAULT', 'CustomName')
@@ -138,6 +136,9 @@ class DbusShellyBaseService:
 class DbusShelly1PMService(DbusShellyBaseService):
   "Shelly 1 PM"
 
+  def __init__(self, servicename, paths, config):
+    super().__init__(servicename, paths, config, productname='Shelly 1PM', connection='Shelly 1PM HTTP JSON service')
+
   def _getShellySerial(self):
     return self._getShellyJson("status")["mac"]
 
@@ -179,6 +180,9 @@ class DbusShelly1PMService(DbusShellyBaseService):
 class DbusShelly1PlusPMService(DbusShellyBaseService):
   "Shelly Plus 1 PM"
 
+  def __init__(self, servicename, paths, config):
+    super().__init__(servicename, paths, config, productname='Shelly Plus 1PM', connection='Shelly Plus 1PM HTTP JSON service')
+
   def _getShellySerial(self):
     return self._getShellyJson("rpc/Sys.GetStatus")["mac"]
 
@@ -219,14 +223,19 @@ class DbusShelly1PlusPMService(DbusShellyBaseService):
     return total_power, total_energy
 
 def main():
+  config = ConfigParser()
+  config.read(str(script_path.parent / "config.ini"))
+
+  logging_handlers = [logging.StreamHandler()]
+  logging_file = config.get("DEFAULT", "LogFile")
+  if logging_file:
+    logging_handlers.append(logging.FileHandler(str(script_path.parent / logging_file)))
+
   #configure logging
   logging.basicConfig(format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
                       datefmt='%Y-%m-%d %H:%M:%S',
                       level=logging.INFO,
-                      handlers=[
-                          logging.FileHandler(str(script_path / "/current.log")),
-                          logging.StreamHandler()
-                      ])
+                      handlers=logging_handlers)
 
   try:
       logging.info("Start")
@@ -241,8 +250,11 @@ def main():
       _w = lambda p, v: (str(round(v, 1)) + 'W')
       _v = lambda p, v: (str(round(v, 1)) + 'V')
 
+      shelly_plus = config.getboolean("DEFAULT", "ShellyPlus")
+      service_class = DbusShelly1PlusPMService if shelly_plus else DbusShelly1PMService
+
       #start our main-service
-      pvac_output = DbusShelly1PlusPMService(
+      pvac_output = service_class(
         servicename='com.victronenergy.pvinverter',
         paths={
           '/Ac/Energy/Forward': {'initial': None, 'textformat': _kwh},
@@ -261,7 +273,8 @@ def main():
           '/Ac/L1/Energy/Forward': {'initial': None, 'textformat': _kwh},
           '/Ac/L2/Energy/Forward': {'initial': None, 'textformat': _kwh},
           '/Ac/L3/Energy/Forward': {'initial': None, 'textformat': _kwh},
-        })
+        },
+        config=config)
 
       logging.info('Connected to dbus, and switching over to gobject.MainLoop() (= event based)')
       mainloop = gobject.MainLoop()
